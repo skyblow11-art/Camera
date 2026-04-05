@@ -166,6 +166,31 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
 /* freeze mode button */
 #btn-freeze.on{background:linear-gradient(135deg,#b8d4e0,#c8b8e0);}
 
+/* right side strip */
+#right-strip{
+  position:fixed;right:12px;top:50%;transform:translateY(-50%);
+  z-index:2147483647;
+  display:none;flex-direction:column;gap:10px;align-items:center;
+  pointer-events:auto;
+}
+#right-strip.show{display:flex;}
+.rsbtn{
+  width:48px;height:48px;border-radius:50%;border:none;
+  background:rgba(252,228,245,0.92);
+  font-size:1.2rem;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 3px 14px var(--sh);
+  cursor:pointer;
+  -webkit-user-select:none;user-select:none;
+  transition:transform 0.15s,background 0.15s;
+  pointer-events:auto;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,0.7);
+}
+.rsbtn:active{transform:scale(0.88);}
+.rsbtn.on{background:linear-gradient(135deg,#ffc2d4,#d4b8e0);}
+#btn-rec.recording{background:linear-gradient(135deg,#ff8888,#ffaaaa);animation:pulse 1s infinite;}
+
 /* char count badge */
 #count-badge{
   position:fixed;top:calc(env(safe-area-inset-top,0px)+10px);right:14px;
@@ -200,16 +225,19 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
   </div>
 </div>
 
-<!-- UI Panel (bottom) -->
+<!-- UI Panel (bottom) — 4 buttons -->
 <div id="ui-panel">
   <button class="ubtn" id="btn-add">➕</button>
   <button class="ubtn" id="btn-cam">📷</button>
   <button class="ubtn" id="btn-bgpic">🖼️</button>
-  <button class="ubtn" id="btn-shoot">🌟</button>
-  <button class="ubtn" id="btn-big">🔍</button>
-  <button class="ubtn" id="btn-sml">🔎</button>
-  <button class="ubtn" id="btn-freeze">▶️</button>
-  <button class="ubtn" id="btn-rec">⏺️</button>
+  <button class="ubtn" id="btn-glb">🎲</button>
+</div>
+
+<!-- Right strip: freeze / photo / video -->
+<div id="right-strip">
+  <button class="rsbtn" id="btn-freeze">▶️</button>
+  <button class="rsbtn" id="btn-shoot">📸</button>
+  <button class="rsbtn" id="btn-rec">⏺️</button>
 </div>
 
 <!-- Selected char bar (top) -->
@@ -226,7 +254,8 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
 <button id="ar-shoot">📸</button>
 
 <!-- hidden file inputs -->
-<input type="file" id="fi-char" accept="image/*,.glb" multiple style="display:none">
+<input type="file" id="fi-img"  accept="image/*" multiple style="display:none">
+<input type="file" id="fi-glb"  accept=".glb" multiple style="display:none">
 <input type="file" id="fi-bg"   accept="image/*" style="display:none">
 
 <script type="module">
@@ -379,6 +408,7 @@ function select(c){
   document.getElementById('sel-bar').classList.toggle('show',!!c);
   updateBadge();
 }
+function showRightStrip(){ document.getElementById('right-strip').classList.add('show'); }
 function updateBadge(){
   const b=document.getElementById('count-badge');
   if(chars.length>0){b.textContent=`${chars.length} / 5`;b.classList.add('show');}
@@ -409,12 +439,13 @@ async function loadGLTF(){
 // ══════════════════════════════════════
 // File loading
 // ══════════════════════════════════════
-async function loadFiles(files){
+async function loadFiles(files, forceType){
   for(const f of Array.from(files)){
     if(chars.length>=5){toast('5体が上限だよ〜！');break;}
     spin(true);
     const ext=f.name.split('.').pop().toLowerCase();
-    if(ext==='glb')await add3d(f); else await add2d(f);
+    const type=forceType||(ext==='glb'?'3d':'2d');
+    if(type==='3d')await add3d(f); else await add2d(f);
     spin(false);
   }
   document.getElementById('load-screen').classList.add('hide');
@@ -435,7 +466,7 @@ async function add3d(file){
       scene.add(mesh);
       const c=new Char({type:'3d',mesh,img:null,bs:s});
       chars.push(c);select(c);
-      toast(`3Dモデル召喚！🌸 (${chars.length}/5)`);res();
+      toast(`3Dモデル召喚！🌸 (${chars.length}/5)`);showRightStrip();res();
     },e=>{console.error(e);toast('読み込みエラー…');res();});
   });
 }
@@ -446,7 +477,7 @@ async function add2d(file){
     img.onload=()=>{
       const c=new Char({type:'2d',mesh:null,img,bs:1.0});
       chars.push(c);select(c);
-      toast(`イラスト召喚！✨ (${chars.length}/5)`);res();
+      toast(`イラスト召喚！✨ (${chars.length}/5)`);showRightStrip();res();
     };
     img.onerror=res;
     img.src=URL.createObjectURL(file);
@@ -752,10 +783,26 @@ function onBtn(id,fn){
   document.getElementById(id).addEventListener('click',e=>{e.stopPropagation();fn();});
 }
 
-onBtn('btn-first-load',()=>document.getElementById('fi-char').click());
-onBtn('btn-add',()=>{
+// first load & add: show image/glb picker sheet
+function showAddSheet(){
   if(chars.length>=5){toast('5体が上限だよ〜！');return;}
-  document.getElementById('fi-char').click();
+  const existing=document.getElementById('add-sheet');
+  if(existing){existing.remove();return;}
+  const sheet=document.createElement('div');
+  sheet.id='add-sheet';
+  sheet.style.cssText='position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;gap:12px;background:rgba(252,228,245,0.97);border:1px solid rgba(255,255,255,0.8);border-radius:28px;padding:14px 20px;box-shadow:0 4px 24px rgba(200,150,200,0.3);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);';
+  sheet.innerHTML=`
+    <button onclick="document.getElementById('fi-img').click();document.getElementById('add-sheet')?.remove();" style="border:none;border-radius:20px;padding:10px 18px;background:linear-gradient(135deg,#ffc2d4,#d4b8e0);color:white;font-family:'Zen Maru Gothic',sans-serif;font-size:0.9rem;cursor:pointer;">🖼️ 画像・GIF</button>
+    <button onclick="document.getElementById('fi-glb').click();document.getElementById('add-sheet')?.remove();" style="border:none;border-radius:20px;padding:10px 18px;background:linear-gradient(135deg,#d4b8e0,#b8d4e0);color:white;font-family:'Zen Maru Gothic',sans-serif;font-size:0.9rem;cursor:pointer;">🎲 3Dモデル</button>
+  `;
+  document.body.appendChild(sheet);
+  setTimeout(()=>sheet.remove(),5000);
+}
+onBtn('btn-first-load',showAddSheet);
+onBtn('btn-add',showAddSheet);
+onBtn('btn-glb',()=>{
+  if(chars.length>=5){toast('5体が上限だよ〜！');return;}
+  document.getElementById('fi-glb').click();
 });
 onBtn('btn-cam',toggleCam);
 onBtn('btn-bgpic',()=>{
@@ -768,22 +815,18 @@ onBtn('btn-bgpic',()=>{
   document.getElementById('fi-bg').click();
 });
 onBtn('btn-shoot',shoot);
-onBtn('btn-big',()=>{
-  if(sel){sel.sc=Math.min(8,sel.sc*1.22);toast('拡大 🔍');}
-  else toast('キャラをタップして選んでね');
-});
-onBtn('btn-sml',()=>{
-  if(sel){sel.sc=Math.max(.1,sel.sc*.82);toast('縮小 🔎');}
-  else toast('キャラをタップして選んでね');
-});
 onBtn('sb-wobble',()=>{if(sel)sel.wobble();});
 onBtn('btn-freeze',toggleFreeze);
 onBtn('btn-rec',toggleRec);
 onBtn('ar-shoot',shoot);
 onBtn('sb-del',()=>{if(sel)removeChar(sel);});
 
-document.getElementById('fi-char').addEventListener('change',e=>{
-  if(e.target.files.length)loadFiles(e.target.files);
+document.getElementById('fi-img').addEventListener('change',e=>{
+  if(e.target.files.length)loadFiles(e.target.files,'2d');
+  e.target.value='';
+});
+document.getElementById('fi-glb').addEventListener('change',e=>{
+  if(e.target.files.length)loadFiles(e.target.files,'3d');
   e.target.value='';
 });
 document.getElementById('fi-bg').addEventListener('change',e=>{
