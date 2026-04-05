@@ -40,13 +40,12 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
   box-shadow:0 -4px 24px rgba(200,150,200,0.25);
 }
 .ubtn{
-  width:52px;height:52px;border-radius:50%;border:none;
+  width:44px;height:44px;border-radius:50%;border:none;
   background:rgba(255,255,255,0.82);
-  font-size:1.3rem;
+  font-size:1.15rem;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 3px 12px var(--sh);
   cursor:pointer;
-  /* large touch target */
   -webkit-user-select:none;user-select:none;
   transition:transform 0.15s,background 0.15s;
   flex-shrink:0;
@@ -56,11 +55,14 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
 .ubtn:active{transform:scale(0.88);background:rgba(255,200,220,0.9);}
 .ubtn.on{background:linear-gradient(135deg,#ffc2d4,#d4b8e0);}
 #btn-shoot{
-  width:64px;height:64px;font-size:1.6rem;
+  width:54px;height:54px;font-size:1.4rem;
   background:linear-gradient(135deg,#ffc2d4,#d4b8e0);
   box-shadow:0 4px 20px rgba(220,140,180,0.45);
 }
 #btn-shoot:active{transform:scale(0.84);}
+/* record button */
+#btn-rec.recording{background:linear-gradient(135deg,#ff8080,#ffb0b0);animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,100,100,0.4);}50%{box-shadow:0 0 0 8px rgba(255,100,100,0);}}
 
 /* ── top action strip (appears when char selected) ── */
 #sel-bar{
@@ -207,6 +209,7 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
   <button class="ubtn" id="btn-big">🔍</button>
   <button class="ubtn" id="btn-sml">🔎</button>
   <button class="ubtn" id="btn-freeze">▶️</button>
+  <button class="ubtn" id="btn-rec">⏺️</button>
 </div>
 
 <!-- Selected char bar (top) -->
@@ -223,7 +226,7 @@ html,body{width:100%;height:100%;height:100dvh;overflow:hidden;font-family:'Zen 
 <button id="ar-shoot">📸</button>
 
 <!-- hidden file inputs -->
-<input type="file" id="fi-char" accept=".glb,.png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
+<input type="file" id="fi-char" accept="image/*,.glb" multiple style="display:none">
 <input type="file" id="fi-bg"   accept="image/*" style="display:none">
 
 <script type="module">
@@ -285,6 +288,7 @@ class Char {
     let r=Math.random()*Object.values(SW).reduce((a,b)=>a+b,0);
     for(const[k,v]of Object.entries(SW)){r-=v;if(r<=0)return k;}return'walk';
   }
+  _resetRz(){ this.rz=0; } // call after manual gesture ends to prevent drift
   update(dt,ts){
     this.stTimer-=dt;
     if(this.stTimer<=0){
@@ -576,6 +580,8 @@ csel.addEventListener('touchend',e=>{
     if(!g.moved&&sel){
       if(sel.hit(g.tx/window.innerWidth,g.ty/window.innerHeight))sel.wobble();
     }
+    // rz is intentional user rotation, keep it — but sync rz0 for next gesture
+    if(sel)g.rz0=sel.rz;
   } else if(e.touches.length===1){
     g.pinch=false;g.on=true;
     g.lx=e.touches[0].clientX;g.ly=e.touches[0].clientY;
@@ -659,6 +665,77 @@ async function shoot(){
 }
 
 // ══════════════════════════════════════
+// Screen recording
+// ══════════════════════════════════════
+let mediaRec=null, recChunks=[], recOn=false;
+
+async function toggleRec(){
+  const btn=document.getElementById('btn-rec');
+  if(recOn){
+    mediaRec.stop();
+    recOn=false;
+    btn.classList.remove('recording');
+    btn.textContent='⏺️';
+    toast('録画停止 → 保存中…');
+  } else {
+    try{
+      // Capture the whole page visually using getDisplayMedia if available,
+      // otherwise composite canvas stream
+      let stream;
+      // Build a composite canvas stream (bg + 3d + 2d)
+      const fps=30;
+      const W=window.innerWidth,H=window.innerHeight;
+      const compCanvas=document.createElement('canvas');
+      compCanvas.width=W;compCanvas.height=H;
+      const compCtx=compCanvas.getContext('2d');
+      const vid=document.getElementById('bg-vid');
+      const bgi=document.getElementById('bg-img');
+
+      // Draw loop for composite
+      let rafId;
+      function drawFrame(){
+        compCtx.clearRect(0,0,W,H);
+        if(camOn&&vid.readyState>=2) compCtx.drawImage(vid,0,0,W,H);
+        else if(bgi.style.display!=='none') compCtx.drawImage(bgi,0,0,W,H);
+        else{
+          const gr=compCtx.createLinearGradient(0,0,W,H);
+          gr.addColorStop(0,'#fce4f5');gr.addColorStop(.4,'#e8d5f0');gr.addColorStop(1,'#d5e8f0');
+          compCtx.fillStyle=gr;compCtx.fillRect(0,0,W,H);
+        }
+        renderer.render(scene,cam);
+        compCtx.drawImage(c3d,0,0,W,H);
+        compCtx.drawImage(c2d,0,0,W,H);
+        rafId=requestAnimationFrame(drawFrame);
+      }
+      drawFrame();
+
+      stream=compCanvas.captureStream(fps);
+      recChunks=[];
+      const mimeType=MediaRecorder.isTypeSupported('video/webm;codecs=vp9')?'video/webm;codecs=vp9':'video/webm';
+      mediaRec=new MediaRecorder(stream,{mimeType});
+      mediaRec.ondataavailable=e=>{if(e.data.size>0)recChunks.push(e.data);};
+      mediaRec.onstop=()=>{
+        cancelAnimationFrame(rafId);
+        const blob=new Blob(recChunks,{type:'video/webm'});
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download=`mui-rec-${Date.now()}.webm`;
+        a.click();
+        toast('録画を保存しました 🎬');
+      };
+      mediaRec.start(100);
+      recOn=true;
+      btn.classList.add('recording');
+      btn.textContent='⏹️';
+      toast('録画中… ⏹️で停止');
+    }catch(err){
+      console.error('rec error:',err);
+      toast('録画エラー: '+err.message);
+    }
+  }
+}
+
+// ══════════════════════════════════════
 // Helpers
 // ══════════════════════════════════════
 function toast(msg){
@@ -701,6 +778,7 @@ onBtn('btn-sml',()=>{
 });
 onBtn('sb-wobble',()=>{if(sel)sel.wobble();});
 onBtn('btn-freeze',toggleFreeze);
+onBtn('btn-rec',toggleRec);
 onBtn('ar-shoot',shoot);
 onBtn('sb-del',()=>{if(sel)removeChar(sel);});
 
